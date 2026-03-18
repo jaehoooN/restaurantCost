@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>음식점 원가계산</title>
+<meta name="description" content="음식점 메뉴별 원가율, 손익분석, 종합 비용 구조를 실시간으로 계산하는 대시보드">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍚</text></svg>">
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --primary: #2563eb; --primary-light: #dbeafe;
+  --success: #16a34a; --success-light: #dcfce7;
+  --warning: #d97706; --warning-light: #fef3c7;
+  --danger: #dc2626; --danger-light: #fee2e2;
+  --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb;
+  --gray-300: #d1d5db; --gray-500: #6b7280; --gray-700: #374151;
+  --gray-900: #111827; --radius: 14px;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Apple SD Gothic Neo','Noto Sans KR',-apple-system,sans-serif;background:var(--gray-50);color:var(--gray-900);line-height:1.7;font-size:16px;}
+.container{max-width:1200px;margin:0 auto;padding:20px;}
+
+/* ===== HEADER ===== */
+.top-header{background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);color:#fff;padding:24px 28px;border-radius:var(--radius);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;}
+.top-header h1{font-size:1.5rem;font-weight:700;}
+.top-header .sub{opacity:.8;font-size:.95rem;margin-top:2px;}
+.sync-row{display:flex;align-items:center;gap:8px;margin-top:6px;}
+.sync-dot{width:10px;height:10px;border-radius:50%;transition:background .3s;}
+.sync-dot.connected{background:#4ade80;} .sync-dot.disconnected{background:#f87171;} .sync-dot.syncing{background:#facc15;animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+.sync-text{font-size:.85rem;opacity:.8;}
+.online-badge{background:rgba(255,255,255,.2);padding:2px 10px;border-radius:12px;font-size:.85rem;}
+
+/* ===== RESTAURANT SELECTOR ===== */
+.rest-bar{display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap;background:#fff;padding:12px 16px;border-radius:var(--radius);border:1px solid var(--gray-200);box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.rest-bar label{font-size:.95rem;font-weight:600;color:var(--gray-700);white-space:nowrap;}
+.rest-tab{padding:10px 20px;border:2px solid var(--gray-200);background:#fff;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit;color:var(--gray-500);}
+.rest-tab.active{border-color:var(--primary);background:var(--primary-light);color:var(--primary);}
+.rest-tab:hover:not(.active){border-color:var(--gray-300);background:var(--gray-50);}
+.rest-add-btn{padding:10px 16px;border:2px dashed var(--gray-300);background:#fff;border-radius:10px;font-size:1rem;cursor:pointer;color:var(--gray-500);font-family:inherit;transition:all .2s;}
+.rest-add-btn:hover{border-color:var(--primary);color:var(--primary);}
+
+/* ===== TABS ===== */
+.tabs{display:flex;gap:6px;background:var(--gray-100);padding:6px;border-radius:var(--radius);margin-bottom:24px;}
+.tab{flex:1;padding:14px 16px;border:none;background:transparent;font-size:1.05rem;font-weight:600;color:var(--gray-500);cursor:pointer;border-radius:10px;transition:all .2s;font-family:inherit;}
+.tab.active{background:#fff;color:var(--primary);box-shadow:0 2px 6px rgba(0,0,0,.08);}
+.tab:hover:not(.active){color:var(--gray-700);}
+.tab-content{display:none;}.tab-content.active{display:block;}
+
+/* ===== CARDS ===== */
+.card{background:#fff;border-radius:var(--radius);box-shadow:0 1px 4px rgba(0,0,0,.05);border:1px solid var(--gray-200);padding:24px;margin-bottom:20px;}
+.card h2{font-size:1.15rem;font-weight:700;margin-bottom:16px;color:var(--gray-700);}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px;}
+.stat-card{background:#fff;border-radius:var(--radius);padding:20px;border:1px solid var(--gray-200);box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.stat-card .label{font-size:.9rem;color:var(--gray-500);margin-bottom:4px;}
+.stat-card .value{font-size:1.6rem;font-weight:800;}
+.stat-card .sub{font-size:.85rem;color:var(--gray-500);margin-top:4px;}
+
+/* ===== TABLE ===== */
+table{width:100%;border-collapse:collapse;font-size:.95rem;}
+th{text-align:left;padding:12px 14px;background:var(--gray-50);color:var(--gray-500);font-weight:700;font-size:.85rem;border-bottom:2px solid var(--gray-200);}
+td{padding:12px 14px;border-bottom:1px solid var(--gray-100);}
+tr:hover td{background:var(--gray-50);}
+
+/* ===== FORM ===== */
+input[type="text"],input[type="number"],select{width:100%;padding:12px 14px;border:2px solid var(--gray-200);border-radius:10px;font-size:1rem;transition:border-color .2s;font-family:inherit;background:#fff;}
+input:focus,select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.1);}
+input[readonly]{background:var(--gray-50);color:var(--gray-500);}
+
+/* ===== BUTTONS ===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 22px;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit;white-space:nowrap;}
+.btn-lg{padding:14px 28px;font-size:1.1rem;}
+.btn-sm{padding:8px 14px;font-size:.9rem;}
+.btn-primary{background:var(--primary);color:#fff;} .btn-primary:hover{background:#1d4ed8;}
+.btn-success{background:var(--success);color:#fff;} .btn-success:hover{background:#15803d;}
+.btn-danger{background:#fff;color:var(--danger);border:2px solid var(--danger);} .btn-danger:hover{background:var(--danger-light);}
+.btn-outline{background:#fff;color:var(--gray-700);border:2px solid var(--gray-300);} .btn-outline:hover{background:var(--gray-50);}
+.btn-ghost{background:transparent;color:var(--gray-500);border:none;padding:8px;} .btn-ghost:hover{color:var(--danger);}
+
+.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:.85rem;font-weight:700;}
+.badge-success{background:var(--success-light);color:var(--success);}
+.badge-warning{background:var(--warning-light);color:var(--warning);}
+.badge-danger{background:var(--danger-light);color:var(--danger);}
+
+/* ===== CHARTS ===== */
+.bar-container{width:100%;height:28px;background:var(--gray-100);border-radius:14px;overflow:hidden;display:flex;}
+.bar-segment{height:100%;transition:width .5s;display:flex;align-items:center;justify-content:center;font-size:.75rem;color:#fff;font-weight:700;min-width:0;overflow:hidden;}
+.legend{display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:.9rem;color:var(--gray-500);}
+.legend-dot{width:14px;height:14px;border-radius:50%;}
+.chart-bar-h{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+.chart-bar-h .lb{width:110px;font-size:.95rem;text-align:right;color:var(--gray-700);flex-shrink:0;font-weight:500;}
+.chart-bar-h .bw{flex:1;height:32px;background:var(--gray-100);border-radius:8px;overflow:hidden;}
+.chart-bar-h .bf{height:100%;border-radius:8px;transition:width .5s;display:flex;align-items:center;padding-left:10px;font-size:.85rem;color:#fff;font-weight:700;}
+.chart-bar-h .vl{width:90px;font-size:.9rem;color:var(--gray-500);flex-shrink:0;text-align:right;}
+
+/* ===== COST ITEM ROW ===== */
+.cost-item{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.cost-item input[type="text"]{flex:2;}
+.cost-item input[type="number"]{flex:1.5;}
+.cost-item .btn-ghost{flex-shrink:0;}
+
+/* ===== INGREDIENT ROW (simplified) ===== */
+.ing-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.ing-row input[type="text"]{flex:2;}
+.ing-row input[type="number"]{flex:1;}
+
+/* ===== MODAL ===== */
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:1000;justify-content:center;align-items:center;padding:16px;}
+.modal-overlay.show{display:flex;}
+.modal{background:#fff;border-radius:var(--radius);padding:28px;max-width:600px;width:100%;max-height:88vh;overflow-y:auto;}
+.modal h2{margin-bottom:20px;font-size:1.2rem;}
+.divider{height:1px;background:var(--gray-200);margin:20px 0;}
+.summary-row{display:flex;justify-content:space-between;padding:10px 0;font-size:1rem;}
+.summary-row.total{font-weight:800;font-size:1.15rem;border-top:2px solid var(--gray-200);padding-top:14px;margin-top:4px;}
+
+/* ===== TOAST ===== */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);z-index:2000;background:var(--gray-900);color:#fff;padding:14px 24px;border-radius:12px;font-size:1rem;opacity:0;transition:all .3s;box-shadow:0 4px 16px rgba(0,0,0,.2);white-space:nowrap;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ===== SETUP ===== */
+.setup-banner{background:var(--warning-light);border:2px solid #fcd34d;border-radius:var(--radius);padding:24px;margin-bottom:24px;}
+.setup-banner h3{color:var(--warning);margin-bottom:8px;font-size:1.1rem;}
+.setup-banner p{font-size:.95rem;color:var(--gray-700);margin-bottom:12px;line-height:1.8;}
+.setup-banner .config-input{width:100%;padding:14px;border:2px solid var(--gray-300);border-radius:10px;font-family:monospace;font-size:.9rem;min-height:130px;resize:vertical;}
+.setup-guide{background:#fff;padding:18px;border-radius:10px;margin-bottom:14px;font-size:.95rem;line-height:2;}
+
+.empty-state{text-align:center;padding:48px 20px;color:var(--gray-500);}
+.empty-state .icon{font-size:3rem;margin-bottom:12px;}
+
+/* ===== OKPOS IMPORT ===== */
+.okpos-preview{max-height:400px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:10px;}
+.okpos-preview table{font-size:.9rem;}
+.okpos-preview th{position:sticky;top:0;z-index:1;background:var(--gray-100);}
+.okpos-row-skip td{opacity:.4;text-decoration:line-through;}
+.okpos-check{width:20px;height:20px;cursor:pointer;accent-color:var(--primary);}
+.okpos-tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:.8rem;font-weight:600;}
+.okpos-tag-new{background:#dbeafe;color:#2563eb;}
+.okpos-tag-update{background:#dcfce7;color:#16a34a;}
+.okpos-tag-skip{background:var(--gray-100);color:var(--gray-500);}
+.okpos-drop{border:3px dashed var(--gray-300);border-radius:var(--radius);padding:40px 20px;text-align:center;cursor:pointer;transition:all .2s;background:var(--gray-50);}
+.okpos-drop:hover,.okpos-drop.drag-over{border-color:var(--primary);background:var(--primary-light);}
+.okpos-drop .icon{font-size:2.5rem;margin-bottom:10px;}
+.period-input{display:flex;align-items:center;gap:10px;margin:16px 0;padding:14px;background:var(--gray-50);border-radius:10px;}
+.period-input label{font-size:.95rem;font-weight:600;white-space:nowrap;}
+.period-input input{max-width:80px;text-align:center;padding:8px;}
+
+/* ===== SEARCH BAR ===== */
+.search-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+.search-bar input{flex:1;max-width:300px;}
+.search-bar .result-count{font-size:.9rem;color:var(--gray-500);}
+
+/* ===== WON INPUT (comma formatting) ===== */
+.won-input-wrap{position:relative;flex:1.5;}
+.won-input-wrap input{padding-right:30px;}
+.won-input-wrap::after{content:'원';position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--gray-500);font-size:.9rem;pointer-events:none;}
+
+@media(max-width:768px){
+  .container{padding:12px;}
+  .top-header{padding:18px;} .top-header h1{font-size:1.25rem;}
+  .stats-grid{grid-template-columns:repeat(2,1fr);}
+  table{font-size:.85rem;} th,td{padding:10px 8px;}
+  .rest-tab,.rest-add-btn{padding:8px 14px;font-size:.9rem;}
+  .btn{padding:10px 16px;font-size:.95rem;}
+  .chart-bar-h .lb{width:80px;font-size:.85rem;}
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Firebase Setup -->
+  <div class="setup-banner" id="setupBanner" style="display:none;">
+    <h3>🔧 처음 사용하시나요? Firebase 연결이 필요해요</h3>
+    <p>데이터를 서버에 저장하려면 Firebase 설정이 필요합니다.<br>
+    <a href="javascript:void(0)" onclick="document.getElementById('setupGuide').style.display=document.getElementById('setupGuide').style.display==='none'?'block':'none'" style="color:var(--primary);font-weight:600;">📖 설정 방법 보기</a></p>
+    <div id="setupGuide" style="display:none;" class="setup-guide">
+      <strong>1.</strong> <a href="https://console.firebase.google.com/" target="_blank" style="color:var(--primary);">Firebase Console</a> 접속 → 프로젝트 추가<br>
+      <strong>2.</strong> 프로젝트 설정 → 웹 앱 추가 (</> 아이콘)<br>
+      <strong>3.</strong> 표시되는 설정 코드(firebaseConfig) 복사<br>
+      <strong>4.</strong> 아래에 붙여넣기 → 연결 버튼 클릭<br>
+      <strong>5.</strong> Realtime Database → 데이터베이스 만들기 → 테스트 모드<br>
+    </div>
+    <textarea class="config-input" id="configInput" placeholder='Firebase 설정 코드를 여기에 붙여넣어 주세요
+
+예시:
+{
+  "apiKey": "AIza...",
+  "authDomain": "my-project.firebaseapp.com",
+  "databaseURL": "https://my-project-default-rtdb.firebaseio.com",
+  "projectId": "my-project"
+}'></textarea>
+    <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-primary btn-lg" onclick="connectFirebase()">🔗 연결하기</button>
+      <button class="btn btn-outline" onclick="useOffline()">연결 없이 사용하기</button>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <div class="top-header">
+    <div>
+      <h1>🍚 음식점 원가계산</h1>
+      <div class="sub">메뉴별 손익 · 종합 원가 · 수익성 분석</div>
+      <div class="sync-row">
+        <div class="sync-dot" id="syncDot"></div>
+        <span class="sync-text" id="syncText">연결 중...</span>
+        <span class="online-badge" id="onlineBadge" style="display:none;">👤 <span id="onlineCount">1</span>명 접속</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Restaurant Selector -->
+  <div class="rest-bar" id="restBar">
+    <label>🏠 음식점 :</label>
+    <div id="restTabs"></div>
+    <button class="rest-add-btn" onclick="addRestaurant()">＋ 추가</button>
+  </div>
+
+  <!-- Main Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('menu')">📋 메뉴 관리</button>
+    <button class="tab" onclick="switchTab('cost')">💰 비용 관리</button>
+    <button class="tab" onclick="switchTab('dashboard')">📊 손익 분석</button>
+  </div>
+
+  <!-- ============ TAB 1: 메뉴 관리 ============ -->
+  <div id="tab-menu" class="tab-content active">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;">메뉴 목록</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline btn-sm" onclick="backupData()">💾 백업</button>
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('restoreFile').click()">📂 복원</button>
+          <input type="file" id="restoreFile" accept=".json" style="display:none" onchange="restoreData(event)">
+          <button class="btn btn-success btn-lg" onclick="document.getElementById('okposFile').click()">📊 매출 불러오기</button>
+          <button class="btn btn-primary btn-lg" onclick="openMenuModal()">＋ 메뉴 추가</button>
+          <input type="file" id="okposFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleOKPOS(event)">
+        </div>
+      </div>
+      <!-- Search bar -->
+      <div class="search-bar" id="menuSearchBar" style="display:none;">
+        <input type="text" id="menuSearch" placeholder="메뉴명 검색..." oninput="renderMenuTable()">
+        <span class="result-count" id="menuSearchCount"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>메뉴명</th><th>판매가</th><th>재료원가</th>
+            <th>원가율</th><th>마진</th><th>일 판매량</th><th>일 이익</th><th>상태</th><th></th>
+          </tr></thead>
+          <tbody id="menuTableBody"></tbody>
+        </table>
+      </div>
+      <div id="menuEmpty" class="empty-state">
+        <div class="icon">🍽️</div>
+        <p style="font-size:1.05rem;">아직 등록된 메뉴가 없어요</p>
+        <p style="font-size:.95rem;margin-top:6px;color:var(--gray-500);">매출 엑셀을 불러오거나, 직접 메뉴를 추가해보세요</p>
+        <div style="margin-top:16px;">
+          <button class="btn btn-success btn-lg" onclick="document.getElementById('okposFile').click()" style="margin-right:8px;">📊 매출 불러오기</button>
+          <button class="btn btn-outline" onclick="loadSampleData()">샘플 데이터 넣기</button>
+        </div>
+      </div>
+    </div>
+    <div class="stats-grid" id="menuStats" style="display:none;">
+      <div class="stat-card"><div class="label">총 메뉴 수</div><div class="value" id="sMenuCount">0</div></div>
+      <div class="stat-card"><div class="label">평균 원가율</div><div class="value" id="sAvgCR">0%</div><div class="sub">30% 이하가 좋아요</div></div>
+      <div class="stat-card"><div class="label">일 예상 매출</div><div class="value" id="sDailySales">₩0</div></div>
+      <div class="stat-card"><div class="label">일 예상 이익</div><div class="value" id="sDailyProfit">₩0</div></div>
+    </div>
+    <div class="card" id="menuChartCard" style="display:none;">
+      <h2>메뉴별 원가율 비교</h2>
+      <div id="menuChart"></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB 2: 비용 관리 ============ -->
+  <div id="tab-cost" class="tab-content">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">월 총 비용</div><div class="value" id="sTotalCost">₩0</div></div>
+      <div class="stat-card"><div class="label">월 예상 매출</div><div class="value" id="sMonthRev">₩0</div><div class="sub">일 매출 × 영업일수</div></div>
+      <div class="stat-card"><div class="label">월 예상 순이익</div><div class="value" id="sMonthProfit">₩0</div></div>
+      <div class="stat-card"><div class="label">손익분기 일매출</div><div class="value" id="sBreakeven">₩0</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:20px;">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;">📌 고정비 (월)</h2>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-outline btn-sm" onclick="resetCostItems('fixed')">🔄 기본항목</button>
+            <button class="btn btn-outline btn-sm" onclick="addCostItem('fixed')">＋ 항목 추가</button>
+          </div>
+        </div>
+        <div id="fixedCostList"></div>
+        <div class="divider"></div>
+        <div class="summary-row total"><span>고정비 합계</span><span id="totalFixed">₩0</span></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;">📦 변동비 (월)</h2>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-outline btn-sm" onclick="resetCostItems('variable')">🔄 기본항목</button>
+            <button class="btn btn-outline btn-sm" onclick="addCostItem('variable')">＋ 항목 추가</button>
+          </div>
+        </div>
+        <div style="margin-bottom:12px;padding:12px;background:var(--gray-50);border-radius:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:.95rem;">
+            <span style="color:var(--gray-500);">식재료비 (메뉴에서 자동 계산)</span>
+            <strong id="autoIngCost">₩0</strong>
+          </div>
+        </div>
+        <div id="varCostList"></div>
+        <div style="margin-top:14px;">
+          <label style="font-size:.95rem;font-weight:600;color:var(--gray-700);">월 영업일수</label>
+          <input type="number" id="bizDays" value="26" onchange="onCostChange()" style="margin-top:6px;max-width:120px;">
+        </div>
+        <div class="divider"></div>
+        <div class="summary-row total"><span>변동비 합계</span><span id="totalVar">₩0</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>비용 구조</h2>
+      <div id="costStructure"></div>
+      <div style="margin-top:16px;"><div class="bar-container" id="costBar"></div><div class="legend" id="costLegend"></div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB 3: 손익 분석 ============ -->
+  <div id="tab-dashboard" class="tab-content">
+    <div class="stats-grid">
+      <div class="stat-card" style="border-left:4px solid var(--primary);"><div class="label">월 매출</div><div class="value" id="dRev">₩0</div></div>
+      <div class="stat-card" style="border-left:4px solid var(--danger);"><div class="label">월 총 비용</div><div class="value" id="dCost">₩0</div></div>
+      <div class="stat-card" style="border-left:4px solid var(--success);"><div class="label">월 순이익</div><div class="value" id="dProfit">₩0</div></div>
+      <div class="stat-card" style="border-left:4px solid var(--warning);"><div class="label">순이익률</div><div class="value" id="dMargin">0%</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:20px;">
+      <div class="card"><h2>비용 항목별 비중</h2><div id="dCostChart"></div></div>
+      <div class="card"><h2>메뉴별 매출 비중</h2><div id="dCatChart"></div></div>
+    </div>
+    <div class="card"><h2>핵심 지표</h2><div id="dKPI"></div></div>
+    <div class="card"><h2>메뉴별 수익 기여도 (하루)</h2><div id="dContrib"></div></div>
+  </div>
+</div>
+
+<!-- Menu Modal -->
+<div class="modal-overlay" id="menuModal">
+  <div class="modal">
+    <h2 id="modalTitle">메뉴 추가</h2>
+    <input type="hidden" id="editIdx" value="-1">
+    <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+      <div class="form-group"><label style="font-size:.95rem;font-weight:600;display:block;margin-bottom:4px;">메뉴명</label><input type="text" id="mName" placeholder="예: 된장찌개"></div>
+      <div class="form-group"><label style="font-size:.95rem;font-weight:600;display:block;margin-bottom:4px;">판매가 (원)</label><input type="number" id="mPrice" placeholder="9000" onchange="calcMCost()"></div>
+    </div>
+    <div class="form-row" style="margin-bottom:14px;">
+      <div><label style="font-size:.95rem;font-weight:600;display:block;margin-bottom:4px;">하루 예상 판매량</label><input type="number" id="mQty" placeholder="20" value="10" style="max-width:200px;"></div>
+    </div>
+    <div class="divider"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="font-size:1.05rem;color:var(--gray-700);">🥬 재료 구성</h3>
+      <button class="btn btn-outline btn-sm" onclick="addIng()">＋ 재료 추가</button>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:8px;font-size:.85rem;color:var(--gray-500);font-weight:600;">
+      <span style="flex:2;">재료명</span><span style="flex:1;text-align:right;">금액 (원)</span><span style="width:40px;"></span>
+    </div>
+    <div id="ingList"></div>
+    <div class="divider"></div>
+    <div class="summary-row"><span>재료 원가 합계</span><strong id="mTotalCost" style="font-size:1.1rem;">₩0</strong></div>
+    <div class="summary-row"><span>예상 원가율</span><strong id="mCostRate" style="font-size:1.1rem;">0%</strong></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+      <button class="btn btn-outline btn-lg" onclick="closeMenuModal()">취소</button>
+      <button class="btn btn-primary btn-lg" onclick="saveMenu()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- Restaurant Name Modal -->
+<div class="modal-overlay" id="restModal">
+  <div class="modal" style="max-width:420px;">
+    <h2 id="restModalTitle">음식점 추가</h2>
+    <div><label style="font-size:.95rem;font-weight:600;display:block;margin-bottom:6px;">음식점 이름</label>
+    <input type="text" id="restNameInput" placeholder="예: 맛있는 한식당"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+      <button class="btn btn-outline" onclick="closeRestModal()">취소</button>
+      <button class="btn btn-danger" id="restDeleteBtn" onclick="deleteRestaurant()" style="display:none;">삭제</button>
+      <button class="btn btn-primary" onclick="saveRestaurant()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- OKPOS Import Modal -->
+<div class="modal-overlay" id="okposModal">
+  <div class="modal" style="max-width:900px;">
+    <h2>📊 매출 데이터 불러오기</h2>
+    <p style="color:var(--gray-500);font-size:.95rem;margin-bottom:12px;">주문금액이 있는 메뉴만 표시됩니다. 단가와 일평균 판매량을 수정할 수 있어요.</p>
+
+    <div class="period-input">
+      <label>📅 이 데이터의 기간:</label>
+      <input type="number" id="okposDays" value="30" min="1" max="365" style="max-width:70px;" onchange="recalcOkposDays()">
+      <span style="font-size:.95rem;color:var(--gray-700);">일간 데이터 → 하루 평균으로 자동 계산</span>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <button class="btn btn-outline btn-sm" onclick="okposCheckAll(true)">전체 선택</button>
+      <button class="btn btn-outline btn-sm" onclick="okposCheckAll(false)">전체 해제</button>
+      <span style="flex:1;"></span>
+      <span style="font-size:.9rem;color:var(--gray-500);align-self:center;" id="okposSelectedInfo"></span>
+    </div>
+
+    <div class="okpos-preview" id="okposPreview"></div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+      <button class="btn btn-outline btn-lg" onclick="closeOkposModal()">취소</button>
+      <button class="btn btn-primary btn-lg" onclick="applyOkposData()">✅ 선택 메뉴 적용하기</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ====================================================
+// STATE
+// ====================================================
+let db = null, isOnline = false, ignoreNext = false;
+let restaurants = []; // [{id, name}]
+let currentRestId = null;
+let menus = [];
+let fixedCosts = [];
+let varCosts = [];
+let bizDays = 26;
+const FB_CONFIG_KEY = 'hansik_fb_config';
+const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#06b6d4','#ec4899','#14b8a6','#a855f7'];
+
+// ====================================================
+// UTILS
+// ====================================================
+function fmt(n){if(n==null||isNaN(n))return'₩0';return'₩'+Math.round(n).toLocaleString('ko-KR');}
+function pct(n){return(n||0).toFixed(1)+'%';}
+let toastT;
+function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2500);}
+function setSyncStatus(s,t){document.getElementById('syncDot').className='sync-dot '+s;document.getElementById('syncText').textContent=t;}
+
+// 천 단위 콤마 포맷 (입력 필드용)
+function fmtComma(n){return n.toLocaleString('ko-KR');}
+function parseComma(s){return parseInt(String(s).replace(/,/g,''))||0;}
+
+// ====================================================
+// FIREBASE
+// ====================================================
+function connectFirebase(){
+  const raw=document.getElementById('configInput').value.trim();
+  let config;
+  try{const m=raw.match(/\{[\s\S]*\}/);if(!m)throw 0;config=JSON.parse(m[0]);if(!config.databaseURL)throw 0;}
+  catch(e){alert('올바른 Firebase 설정이 아닙니다.\ndatabaseURL이 포함된 설정 코드를 붙여넣어 주세요.');return;}
+  localStorage.setItem(FB_CONFIG_KEY,JSON.stringify(config));
+  initFirebase(config);
+}
+
+function initFirebase(config){
+  try{
+    if(!firebase.apps.length)firebase.initializeApp(config);
+    db=firebase.database();
+    document.getElementById('setupBanner').style.display='none';
+    setSyncStatus('syncing','연결 중...');
+
+    db.ref('.info/connected').on('value',s=>{
+      if(s.val()){isOnline=true;setSyncStatus('connected','실시간 연결됨');
+        const p=db.ref('presence/'+Date.now()+'_'+Math.random().toString(36).slice(2));p.onDisconnect().remove();p.set(true);
+      }else{isOnline=false;setSyncStatus('disconnected','연결 끊김');}
+    });
+    db.ref('presence').on('value',s=>{const c=s.numChildren();const b=document.getElementById('onlineBadge');if(c>0){b.style.display='';document.getElementById('onlineCount').textContent=c;}else b.style.display='none';});
+
+    // Load restaurant list
+    db.ref('restaurants').on('value',s=>{
+      const d=s.val();
+      restaurants=d?Object.keys(d).map(k=>({id:k,name:d[k].name||k})):[];
+      if(!restaurants.length){
+        const ref=db.ref('restaurants').push();
+        ref.set({name:'우리 가게'});
+        return;
+      }
+      renderRestTabs();
+      if(!currentRestId||!restaurants.find(r=>r.id===currentRestId)){
+        switchRestaurant(restaurants[0].id);
+      }
+    });
+
+    showToast('서버에 연결되었어요!');
+  }catch(e){setSyncStatus('disconnected','연결 실패');showToast('연결 실패: '+e.message);}
+}
+
+function listenToRestData(rid){
+  if(listenToRestData._prev)db.ref('rdata/'+listenToRestData._prev).off();
+  listenToRestData._prev=rid;
+
+  db.ref('rdata/'+rid).on('value',s=>{
+    if(ignoreNext){ignoreNext=false;return;}
+    const d=s.val()||{};
+    menus=d.menus||[];
+    fixedCosts=d.fixedCosts||getDefaultFixed();
+    varCosts=d.varCosts||getDefaultVar();
+    bizDays=d.bizDays||26;
+    document.getElementById('bizDays').value=bizDays;
+    renderAll();
+  });
+}
+
+function saveToServer(){
+  if(!db||!currentRestId)return;
+  const data={menus,fixedCosts,varCosts,bizDays:parseInt(document.getElementById('bizDays').value)||26,lastUpdated:Date.now()};
+  setSyncStatus('syncing','저장 중...');
+  ignoreNext=true;
+  db.ref('rdata/'+currentRestId).set(data)
+    .then(()=>setSyncStatus('connected','실시간 연결됨'))
+    .catch(e=>{setSyncStatus('disconnected','저장 실패');ignoreNext=false;});
+}
+
+function useOffline(){
+  document.getElementById('setupBanner').style.display='none';
+  setSyncStatus('disconnected','오프라인 모드');
+  restaurants=[{id:'local',name:'우리 가게'}];
+  currentRestId='local';
+  fixedCosts=getDefaultFixed();
+  varCosts=getDefaultVar();
+  renderRestTabs();
+  renderAll();
+  showToast('오프라인으로 사용합니다');
+}
+
+// ====================================================
+// DEFAULT COSTS
+// ====================================================
+function getDefaultFixed(){return[
+  {name:'임대료',amount:2000000},
+  {name:'인건비(정직원)',amount:6000000},
+  {name:'인건비(아르바이트)',amount:3000000},
+  {name:'4대보험(사업주부담)',amount:800000},
+  {name:'전기요금',amount:400000},
+  {name:'가스요금',amount:350000},
+  {name:'수도요금',amount:100000},
+  {name:'통신비(인터넷/전화)',amount:80000},
+  {name:'보험료(화재/배상)',amount:150000},
+  {name:'감가상각비(인테리어)',amount:300000},
+  {name:'감가상각비(주방설비)',amount:200000},
+  {name:'POS/카드단말기 임대료',amount:50000},
+  {name:'세무사 기장료',amount:150000},
+  {name:'정수기 렌탈',amount:30000},
+  {name:'위생관리비(방역/청소)',amount:100000}
+];}
+function getDefaultVar(){return[
+  {name:'소모품비(랩/호일/장갑)',amount:200000},
+  {name:'세제/위생용품',amount:100000},
+  {name:'카드수수료',amount:300000},
+  {name:'배달앱수수료',amount:500000},
+  {name:'배달포장용기/봉투',amount:300000},
+  {name:'마케팅/광고비',amount:200000},
+  {name:'냅킨/물티슈/이쑤시개',amount:80000},
+  {name:'쓰레기봉투/폐기물처리',amount:100000},
+  {name:'가스(부탄/숯)',amount:150000},
+  {name:'주차비/교통비',amount:50000}
+];}
+
+// ====================================================
+// RESTAURANTS
+// ====================================================
+function renderRestTabs(){
+  const c=document.getElementById('restTabs');
+  c.innerHTML=restaurants.map(r=>`<button class="rest-tab ${r.id===currentRestId?'active':''}" onclick="switchRestaurant('${r.id}')" ondblclick="editRestaurant('${r.id}')">${r.name}</button>`).join('');
+}
+
+function switchRestaurant(id){
+  currentRestId=id;
+  renderRestTabs();
+  if(db){listenToRestData(id);}
+  else{renderAll();}
+}
+
+function addRestaurant(){
+  document.getElementById('restModalTitle').textContent='음식점 추가';
+  document.getElementById('restNameInput').value='';
+  document.getElementById('restDeleteBtn').style.display='none';
+  document.getElementById('restModal').dataset.mode='add';
+  document.getElementById('restModal').classList.add('show');
+}
+
+function editRestaurant(id){
+  const r=restaurants.find(x=>x.id===id);if(!r)return;
+  document.getElementById('restModalTitle').textContent='음식점 이름 변경';
+  document.getElementById('restNameInput').value=r.name;
+  document.getElementById('restDeleteBtn').style.display=restaurants.length>1?'':'none';
+  document.getElementById('restModal').dataset.mode='edit';
+  document.getElementById('restModal').dataset.editId=id;
+  document.getElementById('restModal').classList.add('show');
+}
+
+function closeRestModal(){document.getElementById('restModal').classList.remove('show');}
+
+function saveRestaurant(){
+  const name=document.getElementById('restNameInput').value.trim();
+  if(!name){alert('이름을 입력해주세요.');return;}
+  const modal=document.getElementById('restModal');
+  if(modal.dataset.mode==='add'){
+    if(db){db.ref('restaurants').push().set({name});}
+    else{restaurants.push({id:'r'+Date.now(),name});renderRestTabs();}
+  }else{
+    const id=modal.dataset.editId;
+    if(db){db.ref('restaurants/'+id+'/name').set(name);}
+    else{const r=restaurants.find(x=>x.id===id);if(r)r.name=name;renderRestTabs();}
+  }
+  closeRestModal();
+  showToast('저장되었어요!');
+}
+
+function deleteRestaurant(){
+  if(restaurants.length<=1){alert('최소 1개 음식점이 필요해요.');return;}
+  const id=document.getElementById('restModal').dataset.editId;
+  const r=restaurants.find(x=>x.id===id);
+  if(!confirm(`'${r.name}' 음식점과 모든 데이터를 삭제할까요?`))return;
+  if(db){db.ref('restaurants/'+id).remove();db.ref('rdata/'+id).remove();}
+  else{restaurants=restaurants.filter(x=>x.id!==id);renderRestTabs();if(currentRestId===id)switchRestaurant(restaurants[0].id);}
+  closeRestModal();
+  showToast('삭제되었어요.');
+}
+
+// ====================================================
+// TABS
+// ====================================================
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['menu','cost','dashboard'][i]===name));
+  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  if(name!=='menu')calcOverall();
+}
+
+// ====================================================
+// COST ITEMS (dynamic add/remove) — with comma formatting
+// ====================================================
+function renderCostItems(){
+  renderCostList('fixedCostList',fixedCosts,'fixed');
+  renderCostList('varCostList',varCosts,'variable');
+}
+
+function renderCostList(containerId,items,type){
+  const c=document.getElementById(containerId);
+  c.innerHTML=items.map((it,i)=>`<div class="cost-item">
+    <input type="text" value="${it.name}" placeholder="항목명" onchange="updateCostItem('${type}',${i},'name',this.value)">
+    <div class="won-input-wrap"><input type="text" value="${fmtComma(it.amount)}" placeholder="금액"
+      onfocus="this.value=this.value.replace(/,/g,'')"
+      onblur="this.value=fmtComma(parseComma(this.value));updateCostItem('${type}',${i},'amount',this.value)"
+      onchange="updateCostItem('${type}',${i},'amount',this.value)"></div>
+    <button class="btn-ghost" onclick="removeCostItem('${type}',${i})" title="삭제">✕</button>
+  </div>`).join('');
+}
+
+function addCostItem(type){
+  if(type==='fixed')fixedCosts.push({name:'',amount:0});
+  else varCosts.push({name:'',amount:0});
+  renderCostItems();
+}
+
+function updateCostItem(type,idx,field,val){
+  const list=type==='fixed'?fixedCosts:varCosts;
+  if(field==='amount')list[idx].amount=parseComma(val);
+  else list[idx].name=val;
+  calcOverall();
+  saveToServer();
+}
+
+function removeCostItem(type,idx){
+  const list=type==='fixed'?fixedCosts:varCosts;
+  const name=list[idx].name||'이 항목';
+  if(!confirm(`'${name}'을(를) 삭제할까요?`))return;
+  if(type==='fixed')fixedCosts.splice(idx,1);else varCosts.splice(idx,1);
+  renderCostItems();calcOverall();saveToServer();
+}
+
+function resetCostItems(type){
+  const label=type==='fixed'?'고정비':'변동비';
+  if(!confirm(`${label} 항목을 기본 항목으로 초기화할까요?\n현재 입력된 ${label} 항목이 모두 바뀝니다.`))return;
+  if(type==='fixed')fixedCosts=getDefaultFixed();
+  else varCosts=getDefaultVar();
+  renderCostItems();calcOverall();saveToServer();
+  showToast(`${label} 기본 항목으로 초기화했어요!`);
+}
+
+function onCostChange(){bizDays=parseInt(document.getElementById('bizDays').value)||26;calcOverall();saveToServer();}
+
+// ====================================================
+// MENU MODAL (simplified — no category)
+// ====================================================
+function openMenuModal(idx){
+  document.getElementById('editIdx').value=idx!==undefined?idx:-1;
+  document.getElementById('modalTitle').textContent=idx!==undefined?'메뉴 수정':'메뉴 추가';
+  if(idx!==undefined){
+    const m=menus[idx];
+    document.getElementById('mName').value=m.name;
+    document.getElementById('mPrice').value=m.price;
+    document.getElementById('mQty').value=m.qty;
+    renderIngs(m.ingredients||[]);
+  }else{
+    document.getElementById('mName').value='';
+    document.getElementById('mPrice').value='';
+    document.getElementById('mQty').value=10;
+    renderIngs([{name:'',amount:''}]);
+  }
+  calcMCost();
+  document.getElementById('menuModal').classList.add('show');
+}
+function closeMenuModal(){document.getElementById('menuModal').classList.remove('show');}
+
+function renderIngs(list){
+  const c=document.getElementById('ingList');
+  c.innerHTML=list.map((it,i)=>`<div class="ing-row">
+    <input type="text" placeholder="예: 돼지고기" value="${it.name||''}" onchange="calcMCost()" style="flex:2;">
+    <input type="number" placeholder="0" value="${it.amount||''}" onchange="calcMCost()" style="flex:1;text-align:right;">
+    <button class="btn-ghost" onclick="removeIng(${i})">✕</button>
+  </div>`).join('');
+}
+
+function addIng(){const l=getIngs();l.push({name:'',amount:''});renderIngs(l);}
+function removeIng(i){const l=getIngs();l.splice(i,1);if(!l.length)l.push({name:'',amount:''});renderIngs(l);calcMCost();}
+function getIngs(){
+  return Array.from(document.querySelectorAll('#ingList .ing-row')).map(r=>{
+    const ins=r.querySelectorAll('input');
+    return{name:ins[0].value,amount:parseFloat(ins[1].value)||0};
+  });
+}
+
+function calcMCost(){
+  const total=getIngs().reduce((s,i)=>s+i.amount,0);
+  const price=parseFloat(document.getElementById('mPrice').value)||0;
+  document.getElementById('mTotalCost').textContent=fmt(total);
+  document.getElementById('mCostRate').textContent=price>0?pct(total/price*100):'0%';
+}
+
+function saveMenu(){
+  const name=document.getElementById('mName').value.trim();
+  const price=parseFloat(document.getElementById('mPrice').value);
+  if(!name||!price){alert('메뉴명과 판매가를 입력해주세요.');return;}
+  const ingredients=getIngs().filter(i=>i.name);
+  const cost=ingredients.reduce((s,i)=>s+i.amount,0);
+  const menu={name,price,qty:parseInt(document.getElementById('mQty').value)||0,ingredients,cost};
+  const idx=parseInt(document.getElementById('editIdx').value);
+  if(idx>=0){
+    // 기존 salesData 유지
+    if(menus[idx].salesData) menu.salesData = menus[idx].salesData;
+    menus[idx]=menu;
+  } else menus.push(menu);
+  closeMenuModal();renderAll();saveToServer();
+}
+
+function deleteMenu(idx){
+  if(confirm(`'${menus[idx].name}' 메뉴를 삭제할까요?`)){menus.splice(idx,1);renderAll();saveToServer();}
+}
+
+// ====================================================
+// RENDER ALL
+// ====================================================
+function renderAll(){
+  renderMenuTable();
+  renderCostItems();
+  calcOverall();
+}
+
+function renderMenuTable(){
+  const tbody=document.getElementById('menuTableBody');
+  const empty=document.getElementById('menuEmpty');
+  const stats=document.getElementById('menuStats');
+  const chart=document.getElementById('menuChartCard');
+  const searchBar=document.getElementById('menuSearchBar');
+  if(!menus.length){tbody.innerHTML='';empty.style.display='';stats.style.display='none';chart.style.display='none';searchBar.style.display='none';return;}
+  empty.style.display='none';stats.style.display='';chart.style.display='';
+  searchBar.style.display=menus.length>=5?'flex':'none';
+
+  // 검색 필터
+  const query=(document.getElementById('menuSearch').value||'').trim().toLowerCase();
+
+  // 원가 미입력 메뉴를 상단에 정렬
+  const sorted=[...menus.map((m,i)=>({...m,_idx:i}))];
+  sorted.sort((a,b)=>{
+    if((a.cost===0)!==(b.cost===0)) return a.cost===0?-1:1;
+    return 0;
+  });
+
+  // 검색 적용
+  const filtered=query?sorted.filter(m=>m.name.toLowerCase().includes(query)):sorted;
+
+  if(query){
+    document.getElementById('menuSearchCount').textContent=`${filtered.length}/${menus.length}개`;
+  }else{
+    document.getElementById('menuSearchCount').textContent='';
+  }
+
+  let tS=0,tP=0,tCR=0;
+  // 전체 통계는 모든 메뉴 기준
+  menus.forEach(m=>{
+    const cr=m.price>0?(m.cost/m.price*100):0,mg=m.price-m.cost,ds=m.price*m.qty,dp=mg*m.qty;
+    tS+=ds;tP+=dp;tCR+=cr;
+  });
+
+  tbody.innerHTML=filtered.map(m=>{
+    const i=m._idx;
+    const cr=m.price>0?(m.cost/m.price*100):0,mg=m.price-m.cost,ds=m.price*m.qty,dp=mg*m.qty;
+    let b='badge-success',l='양호';
+    if(m.cost===0){b='badge-danger';l='원가 미입력';}
+    else if(cr>40){b='badge-danger';l='주의';}
+    else if(cr>30){b='badge-warning';l='보통';}
+    const needCost = m.cost === 0;
+    return`<tr style="${needCost?'background:#fff7ed;':''}">
+      <td><strong>${m.name}</strong>${needCost?'<br><span style="font-size:.8rem;color:var(--warning);">⚠️ 원가를 입력해주세요</span>':''}</td><td>${fmt(m.price)}</td>
+      <td>${needCost?'<span style="color:var(--danger);font-weight:700;">미입력</span>':fmt(m.cost)}</td>
+      <td>${needCost?'-':pct(cr)}</td><td>${needCost?'-':fmt(mg)}</td><td>${m.qty}개</td><td style="color:${dp>=0?'var(--success)':'var(--danger)'};">${needCost?'-':fmt(dp)}</td>
+      <td><span class="badge ${b}">${l}</span></td>
+      <td style="white-space:nowrap;">
+        <button class="btn ${needCost?'btn-primary':'btn-outline'} btn-sm" onclick="openMenuModal(${i})">${needCost?'원가입력':'수정'}</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteMenu(${i})">삭제</button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('sMenuCount').textContent=menus.length;
+  document.getElementById('sAvgCR').textContent=pct(tCR/menus.length);
+  document.getElementById('sDailySales').textContent=fmt(tS);
+  document.getElementById('sDailyProfit').textContent=fmt(tP);
+  // chart
+  const mx=Math.max(...menus.map(m=>m.price>0?m.cost/m.price*100:0),50);
+  document.getElementById('menuChart').innerHTML=menus.map(m=>{
+    const r=m.price>0?(m.cost/m.price*100):0,cl=r>40?'var(--danger)':r>30?'var(--warning)':'var(--success)';
+    return`<div class="chart-bar-h"><div class="lb">${m.name}</div><div class="bw"><div class="bf" style="width:${Math.max(r/mx*100,2)}%;background:${cl};">${r>12?pct(r):''}</div></div><div class="vl">${pct(r)}</div></div>`;
+  }).join('')+`<div style="margin-top:10px;font-size:.9rem;color:var(--gray-500);"><span style="color:var(--success);">●</span> 30%이하 &nbsp;<span style="color:var(--warning);">●</span> 30~40% &nbsp;<span style="color:var(--danger);">●</span> 40%초과</div>`;
+}
+
+// ====================================================
+// CALC OVERALL
+// ====================================================
+function calcOverall(){
+  const days=parseInt(document.getElementById('bizDays').value)||26;
+  const dailySales=menus.reduce((s,m)=>s+m.price*m.qty,0);
+  const dailyIng=menus.reduce((s,m)=>s+m.cost*m.qty,0);
+  const monthIng=dailyIng*days;
+  document.getElementById('autoIngCost').textContent=fmt(monthIng);
+
+  const fixed=fixedCosts.reduce((s,c)=>s+c.amount,0);
+  const varExtra=varCosts.reduce((s,c)=>s+c.amount,0);
+  const variable=monthIng+varExtra;
+  const total=fixed+variable;
+  const rev=dailySales*days;
+  const profit=rev-total;
+
+  document.getElementById('totalFixed').textContent=fmt(fixed);
+  document.getElementById('totalVar').textContent=fmt(variable);
+  document.getElementById('sTotalCost').textContent=fmt(total);
+  document.getElementById('sMonthRev').textContent=fmt(rev);
+  document.getElementById('sMonthProfit').textContent=fmt(profit);
+  document.getElementById('sMonthProfit').style.color=profit>=0?'var(--success)':'var(--danger)';
+  const vr=rev>0?variable/rev:.5;
+  document.getElementById('sBreakeven').textContent=fmt(vr<1?(fixed/(1-vr))/days:0);
+
+  // cost structure
+  const allCosts=[{label:'식재료비',value:monthIng,color:COLORS[0]}];
+  fixedCosts.filter(c=>c.name&&c.amount).forEach((c,i)=>allCosts.push({label:c.name,value:c.amount,color:COLORS[(i+1)%COLORS.length]}));
+  varCosts.filter(c=>c.name&&c.amount).forEach((c,i)=>allCosts.push({label:c.name,value:c.amount,color:COLORS[(i+fixedCosts.length+1)%COLORS.length]}));
+  const bar=document.getElementById('costBar'),leg=document.getElementById('costLegend');
+  if(!total){bar.innerHTML='';leg.innerHTML='';document.getElementById('costStructure').innerHTML='';updateDash(rev,total,profit,0,0,0,days);return;}
+  bar.innerHTML=allCosts.map(c=>{const w=c.value/total*100;return w>0?`<div class="bar-segment" style="width:${w}%;background:${c.color};">${w>7?Math.round(w)+'%':''}</div>`:''}).join('');
+  leg.innerHTML=allCosts.map(c=>`<div class="legend-item"><div class="legend-dot" style="background:${c.color};"></div>${c.label}: ${fmt(c.value)}</div>`).join('');
+  document.getElementById('costStructure').innerHTML=allCosts.map(c=>`<div class="chart-bar-h"><div class="lb">${c.label}</div><div class="bw"><div class="bf" style="width:${c.value/total*100}%;background:${c.color};">${c.value/total*100>8?fmt(c.value):''}</div></div><div class="vl">${pct(c.value/total*100)}</div></div>`).join('');
+
+  updateDash(rev,total,profit,fixed,monthIng,days);
+}
+
+function updateDash(rev,cost,profit,fixed,ingCost,days){
+  document.getElementById('dRev').textContent=fmt(rev);
+  document.getElementById('dCost').textContent=fmt(cost);
+  document.getElementById('dProfit').textContent=fmt(profit);
+  document.getElementById('dProfit').style.color=profit>=0?'var(--success)':'var(--danger)';
+  const m=rev>0?profit/rev*100:0;
+  document.getElementById('dMargin').textContent=pct(m);
+  document.getElementById('dMargin').style.color=m>=10?'var(--success)':m>=0?'var(--warning)':'var(--danger)';
+
+  // cost breakdown
+  const allC=[{l:'식재료비',v:ingCost,c:'#ef4444'}];
+  fixedCosts.filter(c=>c.name&&c.amount).forEach((c,i)=>allC.push({l:c.name,v:c.amount,c:COLORS[(i+1)%COLORS.length]}));
+  varCosts.filter(c=>c.name&&c.amount).forEach((c,i)=>allC.push({l:c.name,v:c.amount,c:COLORS[(i+fixedCosts.length+1)%COLORS.length]}));
+  document.getElementById('dCostChart').innerHTML=cost>0?allC.map(c=>`<div class="chart-bar-h"><div class="lb">${c.l}</div><div class="bw"><div class="bf" style="width:${c.v/cost*100}%;background:${c.c};">${c.v/cost*100>8?pct(c.v/cost*100):''}</div></div><div class="vl">${fmt(c.v)}</div></div>`).join(''):'<div class="empty-state"><p>비용을 입력해주세요</p></div>';
+
+  // 메뉴별 매출 비중 (카테고리 대신)
+  const menuSales=menus.map(x=>({name:x.name,sales:x.price*x.qty*days})).sort((a,b)=>b.sales-a.sales);
+  document.getElementById('dCatChart').innerHTML=menuSales.length&&rev>0?menuSales.map((x,i)=>`<div class="chart-bar-h"><div class="lb">${x.name}</div><div class="bw"><div class="bf" style="width:${x.sales/rev*100}%;background:${COLORS[i%COLORS.length]};">${x.sales/rev*100>8?pct(x.sales/rev*100):''}</div></div><div class="vl">${fmt(x.sales)}</div></div>`).join(''):'<div class="empty-state"><p>메뉴를 등록해주세요</p></div>';
+
+  // KPI
+  const fcr=rev>0?ingCost/rev*100:0;
+  const laborItem=fixedCosts.find(c=>c.name.includes('인건'));
+  const laborVal=laborItem?laborItem.amount:0;
+  const lcr=rev>0?laborVal/rev*100:0;
+  const rentItem=fixedCosts.find(c=>c.name.includes('임대'));
+  const rv=rentItem?rentItem.amount:0;
+  const rr=rev>0?rv/rev*100:0;
+  const pr=fcr+lcr;
+  document.getElementById('dKPI').innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;">
+    ${kpiCard('식재료 원가율',fcr,30,35,'30% 이하')}${kpiCard('인건비율',lcr,25,30,'25% 이하')}${kpiCard('프라임코스트',pr,60,65,'식재료+인건비 60%이하')}${kpiCard('임대료 비율',rr,10,15,'10% 이하')}
+  </div>`;
+
+  // contribution
+  const sorted=[...menus].sort((a,b)=>(b.price-b.cost)*b.qty-(a.price-a.cost)*a.qty);
+  const tdp=sorted.reduce((s,x)=>s+(x.price-x.cost)*x.qty,0);
+  document.getElementById('dContrib').innerHTML=sorted.length?sorted.map((x,i)=>{const dp=(x.price-x.cost)*x.qty,sh=tdp>0?dp/tdp*100:0;return`<div class="chart-bar-h"><div class="lb">${x.name}</div><div class="bw"><div class="bf" style="width:${Math.max(sh,2)}%;background:${COLORS[i%COLORS.length]};">${sh>8?pct(sh):''}</div></div><div class="vl">${fmt(dp)}/일</div></div>`;}).join(''):'<div class="empty-state"><p>메뉴를 등록해주세요</p></div>';
+}
+
+function kpiCard(label,val,ok,warn,target){
+  const cl=val>warn?'var(--danger)':val>ok?'var(--warning)':'var(--success)';
+  return`<div style="text-align:center;padding:18px;background:var(--gray-50);border-radius:10px;">
+    <div style="font-size:.9rem;color:var(--gray-500);">${label}</div>
+    <div style="font-size:1.5rem;font-weight:800;color:${cl};margin:4px 0;">${pct(val)}</div>
+    <div style="font-size:.8rem;color:var(--gray-500);">목표: ${target}</div>
+  </div>`;
+}
+
+// ====================================================
+// SAMPLE DATA
+// ====================================================
+function loadSampleData(){
+  if(menus.length&&!confirm('기존 메뉴를 샘플로 바꿀까요?'))return;
+  menus=[
+    {name:'된장찌개',price:9000,qty:25,cost:2700,ingredients:[{name:'된장',amount:150},{name:'두부',amount:300},{name:'호박',amount:200},{name:'쌀(밥)',amount:600},{name:'반찬류',amount:1500}]},
+    {name:'김치찌개',price:9000,qty:30,cost:2850,ingredients:[{name:'김치',amount:750},{name:'돼지고기',amount:960},{name:'두부',amount:240},{name:'쌀(밥)',amount:600},{name:'반찬류',amount:300}]},
+    {name:'제육볶음',price:10000,qty:20,cost:3500,ingredients:[{name:'돼지고기',amount:1800},{name:'양파/채소',amount:200},{name:'양념',amount:200},{name:'쌀(밥)',amount:600},{name:'반찬류',amount:700}]},
+    {name:'삼겹살(1인)',price:16000,qty:15,cost:7200,ingredients:[{name:'삼겹살 200g',amount:5600},{name:'쌈채소',amount:400},{name:'쌈장/마늘',amount:200},{name:'반찬류',amount:1000}]},
+    {name:'비빔밥',price:9000,qty:15,cost:2400,ingredients:[{name:'쌀(밥)',amount:750},{name:'나물류',amount:500},{name:'고추장/참기름',amount:220},{name:'계란',amount:250},{name:'반찬류',amount:680}]},
+    {name:'불고기',price:12000,qty:18,cost:4200,ingredients:[{name:'소고기 150g',amount:3300},{name:'양파/채소',amount:160},{name:'양념',amount:140},{name:'쌀(밥)',amount:600}]},
+    {name:'냉면',price:10000,qty:12,cost:2800,ingredients:[{name:'냉면사리',amount:800},{name:'육수',amount:800},{name:'고기편육',amount:600},{name:'계란/오이',amount:275},{name:'겨자/식초',amount:325}]},
+    {name:'소주',price:5000,qty:40,cost:1300,ingredients:[{name:'소주 1병',amount:1300}]},
+    {name:'음료수',price:2000,qty:20,cost:700,ingredients:[{name:'음료수',amount:700}]}
+  ];
+  renderAll();saveToServer();
+  showToast('샘플 데이터를 넣었어요!');
+}
+
+// ====================================================
+// BACKUP / RESTORE
+// ====================================================
+function backupData(){
+  const data={menus,fixedCosts,varCosts,bizDays:parseInt(document.getElementById('bizDays').value)||26,exportDate:new Date().toISOString()};
+  const restName=restaurants.find(r=>r.id===currentRestId);
+  const fileName=`원가계산_백업_${(restName?restName.name:'데이터').replace(/\s/g,'_')}_${new Date().toISOString().slice(0,10)}.json`;
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fileName;a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('백업 파일을 다운로드했어요!');
+}
+
+function restoreData(event){
+  const file=event.target.files[0];if(!file)return;
+  event.target.value='';
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const data=JSON.parse(e.target.result);
+      if(!data.menus||!Array.isArray(data.menus)){throw new Error('invalid');}
+      if(!confirm(`백업 데이터를 복원하면 현재 데이터가 덮어씌워집니다.\n메뉴 ${data.menus.length}개를 복원할까요?`))return;
+      menus=data.menus;
+      fixedCosts=data.fixedCosts||getDefaultFixed();
+      varCosts=data.varCosts||getDefaultVar();
+      bizDays=data.bizDays||26;
+      document.getElementById('bizDays').value=bizDays;
+      renderAll();saveToServer();
+      showToast('데이터를 복원했어요!');
+    }catch(err){
+      alert('올바른 백업 파일이 아닙니다.');
+      console.error(err);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ====================================================
+// OKPOS IMPORT
+// ====================================================
+let okposItems = [];
+
+const SKIP_KEYWORDS = ['추가','리필','제공','수저','가위','집게','냅킨','물티슈','앞접시','앞치마','암접시','선결제','서비스메뉴','사이드메뉴','메인메뉴','추가메뉴','오프라인','용기'];
+
+function handleOKPOS(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type:'array'});
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet);
+
+      okposItems = [];
+      rows.forEach(row => {
+        const name = (row['상품별'] || '').trim();
+        const orderAmount = parseInt(row['주문금액']) || 0;
+        const orderCount = parseInt(row['주문건수']) || 0;
+        const payAmount = parseInt(row['결제금액']) || 0;
+
+        if (!name) return;
+
+        const isSkip = SKIP_KEYWORDS.some(kw => name.includes(kw)) && orderAmount === 0;
+        const hasRevenue = orderAmount > 0;
+        const unitPrice = orderCount > 0 ? Math.round(orderAmount / orderCount) : 0;
+
+        const existingIdx = menus.findIndex(m => m.name === name);
+        const status = existingIdx >= 0 ? 'update' : 'new';
+
+        okposItems.push({
+          name, orderAmount, orderCount, payAmount, unitPrice,
+          checked: hasRevenue && !isSkip,
+          status: hasRevenue ? status : 'skip',
+          existingIdx,
+          isSkip
+        });
+      });
+
+      okposItems.sort((a,b) => {
+        if (a.checked !== b.checked) return b.checked - a.checked;
+        return b.orderAmount - a.orderAmount;
+      });
+
+      renderOkposPreview();
+      document.getElementById('okposModal').classList.add('show');
+    } catch(err) {
+      alert('엑셀 파일을 읽을 수 없습니다.\n매출 엑셀 파일인지 확인해주세요.');
+      console.error(err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderOkposPreview() {
+  const c = document.getElementById('okposPreview');
+  const days = parseInt(document.getElementById('okposDays').value) || 30;
+  const checkedCount = okposItems.filter(i => i.checked).length;
+  const checkedTotal = okposItems.filter(i => i.checked).reduce((s,i) => s + i.orderAmount, 0);
+  document.getElementById('okposSelectedInfo').textContent =
+    `${checkedCount}개 선택 · 총 매출 ${fmt(checkedTotal)}`;
+
+  okposItems.forEach(it => {
+    if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+    if (it.editedPrice === undefined) it.editedPrice = it.unitPrice;
+  });
+
+  c.innerHTML = `<table>
+    <thead><tr>
+      <th style="width:36px;text-align:center;">선택</th>
+      <th>메뉴명</th>
+      <th style="text-align:right;">총 주문금액</th>
+      <th style="text-align:right;">총 건수</th>
+      <th style="text-align:center;width:110px;">판매가(원)</th>
+      <th style="text-align:center;width:90px;">일평균(개)</th>
+      <th style="text-align:center;">상태</th>
+    </tr></thead>
+    <tbody>${okposItems.map((it,i) => {
+      const tagClass = it.status === 'new' ? 'okpos-tag-new' : it.status === 'update' ? 'okpos-tag-update' : 'okpos-tag-skip';
+      const tagText = it.status === 'new' ? '새 메뉴' : it.status === 'update' ? '업데이트' : '건너뜀';
+      const rowClass = !it.checked ? 'okpos-row-skip' : '';
+      return `<tr class="${rowClass}">
+        <td style="text-align:center;"><input type="checkbox" class="okpos-check" ${it.checked?'checked':''} onchange="okposToggle(${i},this.checked)"></td>
+        <td><strong>${it.name}</strong></td>
+        <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${fmt(it.orderAmount)}</td>
+        <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${it.orderCount.toLocaleString()}건</td>
+        <td style="text-align:center;"><input type="number" value="${it.editedPrice}" onchange="okposEditPrice(${i},this.value)" style="width:100px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
+        <td style="text-align:center;"><input type="number" value="${it.editedDaily}" onchange="okposEditDaily(${i},this.value)" style="width:70px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
+        <td style="text-align:center;"><span class="okpos-tag ${tagClass}">${tagText}</span></td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+function recalcOkposDays() {
+  const days = parseInt(document.getElementById('okposDays').value) || 30;
+  okposItems.forEach(it => {
+    it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+  });
+  renderOkposPreview();
+}
+
+function okposEditPrice(idx, val) {
+  okposItems[idx].editedPrice = parseInt(val) || 0;
+}
+
+function okposEditDaily(idx, val) {
+  okposItems[idx].editedDaily = parseInt(val) || 0;
+}
+
+function okposToggle(idx, checked) {
+  okposItems[idx].checked = checked;
+  if (checked && okposItems[idx].status === 'skip') {
+    okposItems[idx].status = okposItems[idx].existingIdx >= 0 ? 'update' : 'new';
+  }
+  if (!checked) okposItems[idx].status = okposItems[idx].orderAmount > 0 ?
+    (okposItems[idx].existingIdx >= 0 ? 'update' : 'new') : 'skip';
+  renderOkposPreview();
+}
+
+function okposCheckAll(val) {
+  okposItems.forEach((it,i) => {
+    if (it.orderAmount > 0) { it.checked = val; }
+  });
+  renderOkposPreview();
+}
+
+function closeOkposModal() {
+  document.getElementById('okposModal').classList.remove('show');
+}
+
+function applyOkposData() {
+  const days = parseInt(document.getElementById('okposDays').value) || 30;
+  const selected = okposItems.filter(i => i.checked && i.orderAmount > 0);
+  if (!selected.length) { alert('적용할 메뉴를 선택해주세요.'); return; }
+
+  let added = 0, updated = 0;
+
+  selected.forEach(it => {
+    const price = it.editedPrice !== undefined ? it.editedPrice : it.unitPrice;
+    const dailyQty = it.editedDaily !== undefined ? it.editedDaily : Math.round(it.orderCount / days);
+    const existingIdx = menus.findIndex(m => m.name === it.name);
+
+    if (existingIdx >= 0) {
+      menus[existingIdx].price = price;
+      menus[existingIdx].qty = dailyQty || 1;
+      menus[existingIdx].salesData = { orderAmount: it.orderAmount, orderCount: it.orderCount, days };
+      updated++;
+    } else {
+      menus.push({
+        name: it.name,
+        price: price,
+        qty: dailyQty || 1,
+        cost: 0,
+        ingredients: [],
+        salesData: { orderAmount: it.orderAmount, orderCount: it.orderCount, days }
+      });
+      added++;
+    }
+  });
+
+  closeOkposModal();
+  renderAll();
+  saveToServer();
+  showToast(`${added}개 메뉴 추가, ${updated}개 업데이트 완료!`);
+}
+
+// ====================================================
+// KEYBOARD
+// ====================================================
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenuModal();closeRestModal();closeOkposModal();}});
+
+// ====================================================
+// INIT
+// ====================================================
+(function(){
+  const saved=localStorage.getItem(FB_CONFIG_KEY);
+  if(saved){try{initFirebase(JSON.parse(saved));return;}catch(e){localStorage.removeItem(FB_CONFIG_KEY);}}
+  document.getElementById('setupBanner').style.display='';
+  setSyncStatus('disconnected','연결 필요');
+  renderAll();
+})();
+</script>
+</body>
+</html>
