@@ -154,6 +154,21 @@ input[readonly]{background:var(--gray-50);color:var(--gray-500);}
 .won-input-wrap input{padding-right:30px;}
 .won-input-wrap::after{content:'원';position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--gray-500);font-size:.9rem;pointer-events:none;}
 
+/* ===== SORTABLE HEADERS ===== */
+th.sortable{cursor:pointer;user-select:none;position:relative;padding-right:22px;}
+th.sortable:hover{color:var(--primary);}
+th.sortable::after{content:'⇅';position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:.75rem;opacity:.4;}
+th.sortable.asc::after{content:'▲';opacity:.8;}
+th.sortable.desc::after{content:'▼';opacity:.8;}
+
+/* ===== SIMULATION ===== */
+.sim-card{background:linear-gradient(135deg,#f0f7ff 0%,#e8f4f8 100%);border:2px solid var(--primary-light);border-radius:var(--radius);padding:24px;margin-bottom:20px;}
+.sim-card h2{color:var(--primary);margin-bottom:16px;}
+.sim-slider-wrap{display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
+.sim-slider-wrap input[type="range"]{flex:1;min-width:200px;height:8px;accent-color:var(--primary);}
+.sim-slider-wrap .sim-pct{font-size:1.4rem;font-weight:800;min-width:70px;text-align:center;}
+.sim-results{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;}
+
 @media(max-width:768px){
   .container{padding:12px;}
   .top-header{padding:18px;} .top-header h1{font-size:1.25rem;}
@@ -219,8 +234,14 @@ input[readonly]{background:var(--gray-50);color:var(--gray-500);}
       <div style="overflow-x:auto;">
         <table>
           <thead><tr>
-            <th>메뉴명</th><th>판매가</th><th>재료원가</th>
-            <th>원가율</th><th>마진</th><th>일 판매량</th><th>일 이익</th><th>상태</th><th></th>
+            <th class="sortable" onclick="sortMenuBy('name')">메뉴명</th>
+            <th class="sortable" onclick="sortMenuBy('price')">판매가</th>
+            <th class="sortable" onclick="sortMenuBy('cost')">재료원가</th>
+            <th class="sortable" onclick="sortMenuBy('costRate')">원가율</th>
+            <th class="sortable" onclick="sortMenuBy('margin')">마진</th>
+            <th class="sortable" onclick="sortMenuBy('qty')">일 판매량</th>
+            <th class="sortable" onclick="sortMenuBy('dailyProfit')">일 이익</th>
+            <th>상태</th><th></th>
           </tr></thead>
           <tbody id="menuTableBody"></tbody>
         </table>
@@ -309,6 +330,16 @@ input[readonly]{background:var(--gray-50);color:var(--gray-500);}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:20px;">
       <div class="card"><h2>비용 항목별 비중</h2><div id="dCostChart"></div></div>
       <div class="card"><h2>메뉴별 매출 비중</h2><div id="dCatChart"></div></div>
+    </div>
+    <div class="sim-card">
+      <h2>📈 매출 변동 시뮬레이션</h2>
+      <p style="font-size:.95rem;color:var(--gray-500);margin-bottom:16px;">매출이 늘거나 줄면 순이익이 어떻게 변하는지 확인해보세요. 고정비는 그대로, 변동비(식재료 등)만 비례해서 변합니다.</p>
+      <div class="sim-slider-wrap">
+        <span style="font-size:.95rem;font-weight:600;">매출 변동:</span>
+        <input type="range" id="simSlider" min="-50" max="100" value="0" step="5" oninput="runSimulation()">
+        <span class="sim-pct" id="simPctLabel" style="color:var(--gray-700);">±0%</span>
+      </div>
+      <div class="sim-results" id="simResults"></div>
     </div>
     <div class="card"><h2>핵심 지표</h2><div id="dKPI"></div></div>
     <div class="card"><h2>메뉴별 수익 기여도 (하루)</h2><div id="dContrib"></div></div>
@@ -401,6 +432,7 @@ let menus = [];
 let fixedCosts = [];
 let varCosts = [];
 let bizDays = 26;
+let menuSortKey = null, menuSortDir = 'asc'; // sorting state
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyACBA0tWAPr5TwUkjK2v3nPlOpiEi-ah6c",
   authDomain: "restaurantcost-a53f9.firebaseapp.com",
@@ -600,7 +632,7 @@ function switchTab(name){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['menu','cost','dashboard'][i]===name));
   document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
-  if(name!=='menu')calcOverall();
+  if(name!=='menu'){calcOverall();if(name==='dashboard')runSimulation();}
 }
 
 // ====================================================
@@ -733,6 +765,32 @@ function renderAll(){
   calcOverall();
 }
 
+function sortMenuBy(key){
+  if(menuSortKey===key){menuSortDir=menuSortDir==='asc'?'desc':'asc';}
+  else{menuSortKey=key;menuSortDir='asc';}
+  // update header classes
+  document.querySelectorAll('th.sortable').forEach(th=>{th.classList.remove('asc','desc');});
+  const cols=['name','price','cost','costRate','margin','qty','dailyProfit'];
+  const idx=cols.indexOf(key);
+  const ths=document.querySelectorAll('th.sortable');
+  if(ths[idx])ths[idx].classList.add(menuSortDir);
+  renderMenuTable();
+}
+
+function getMenuSortVal(m,key){
+  const cr=m.price>0?(m.cost/m.price*100):0;
+  switch(key){
+    case'name':return m.name;
+    case'price':return m.price;
+    case'cost':return m.cost;
+    case'costRate':return cr;
+    case'margin':return m.price-m.cost;
+    case'qty':return m.qty;
+    case'dailyProfit':return(m.price-m.cost)*m.qty;
+    default:return 0;
+  }
+}
+
 function renderMenuTable(){
   const tbody=document.getElementById('menuTableBody');
   const empty=document.getElementById('menuEmpty');
@@ -746,12 +804,21 @@ function renderMenuTable(){
   // 검색 필터
   const query=(document.getElementById('menuSearch').value||'').trim().toLowerCase();
 
-  // 원가 미입력 메뉴를 상단에 정렬
+  // 정렬: 사용자 정렬이 있으면 적용, 없으면 원가 미입력 상단
   const sorted=[...menus.map((m,i)=>({...m,_idx:i}))];
-  sorted.sort((a,b)=>{
-    if((a.cost===0)!==(b.cost===0)) return a.cost===0?-1:1;
-    return 0;
-  });
+  if(menuSortKey){
+    const dir=menuSortDir==='asc'?1:-1;
+    sorted.sort((a,b)=>{
+      const va=getMenuSortVal(a,menuSortKey),vb=getMenuSortVal(b,menuSortKey);
+      if(typeof va==='string')return va.localeCompare(vb,'ko')*dir;
+      return(va-vb)*dir;
+    });
+  }else{
+    sorted.sort((a,b)=>{
+      if((a.cost===0)!==(b.cost===0)) return a.cost===0?-1:1;
+      return 0;
+    });
+  }
 
   // 검색 적용
   const filtered=query?sorted.filter(m=>m.name.toLowerCase().includes(query)):sorted;
@@ -780,7 +847,7 @@ function renderMenuTable(){
     return`<tr style="${needCost?'background:#fff7ed;':''}">
       <td><strong>${m.name}</strong>${needCost?'<br><span style="font-size:.8rem;color:var(--warning);">⚠️ 원가를 입력해주세요</span>':''}</td><td>${fmt(m.price)}</td>
       <td>${needCost?'<span style="color:var(--danger);font-weight:700;">미입력</span>':fmt(m.cost)}</td>
-      <td>${needCost?'-':pct(cr)}</td><td>${needCost?'-':fmt(mg)}</td><td>${m.qty}개</td><td style="color:${dp>=0?'var(--success)':'var(--danger)'};">${needCost?'-':fmt(dp)}</td>
+      <td>${needCost?'-':pct(cr)}</td><td>${needCost?'-':fmt(mg)}</td><td>${Number.isInteger(m.qty)?m.qty:m.qty.toFixed(1)}개</td><td style="color:${dp>=0?'var(--success)':'var(--danger)'};">${needCost?'-':fmt(dp)}</td>
       <td><span class="badge ${b}">${l}</span></td>
       <td style="white-space:nowrap;">
         <button class="btn ${needCost?'btn-primary':'btn-outline'} btn-sm" onclick="openMenuModal(${i})">${needCost?'원가입력':'수정'}</button>
@@ -992,7 +1059,12 @@ function handleOKPOS(event) {
       });
 
       okposItems.sort((a,b) => {
+        // 체크된 항목 우선
         if (a.checked !== b.checked) return b.checked - a.checked;
+        // 새 메뉴가 업데이트보다 위에
+        if (a.status === 'new' && b.status !== 'new') return -1;
+        if (b.status === 'new' && a.status !== 'new') return 1;
+        // 같은 상태면 매출 높은 순
         return b.orderAmount - a.orderAmount;
       });
 
@@ -1016,13 +1088,13 @@ function renderOkposPreview() {
 
   okposItems.forEach(it => {
     if (it.dbPrice && it.dbPrice > 0) {
-      // 기존 메뉴: DB 판매가 사용, 수량은 총매출÷일수÷DB판매가로 역산
+      // 기존 메뉴: DB 판매가 사용, 수량은 총매출÷일수÷DB판매가로 역산 (소수점 1자리)
       it.editedPrice = it.dbPrice;
-      if (it.editedDaily === undefined) it.editedDaily = Math.round(it.orderAmount / days / it.dbPrice);
+      if (it.editedDaily === undefined) it.editedDaily = parseFloat((it.orderAmount / days / it.dbPrice).toFixed(1));
     } else {
       // 새 메뉴: 엑셀 단가 사용
       if (it.editedPrice === undefined) it.editedPrice = it.unitPrice;
-      if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+      if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? parseFloat((it.orderCount / days).toFixed(1)) : 0;
     }
   });
 
@@ -1046,7 +1118,7 @@ function renderOkposPreview() {
         <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${fmt(it.orderAmount)}</td>
         <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${it.orderCount.toLocaleString()}건</td>
         <td style="text-align:center;">${it.dbPrice?`<span style="font-size:.9rem;font-weight:600;">${fmt(it.editedPrice)}</span>`:`<input type="number" value="${it.editedPrice}" onchange="okposEditPrice(${i},this.value)" style="width:100px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}">`}</td>
-        <td style="text-align:center;"><input type="number" value="${it.editedDaily}" onchange="okposEditDaily(${i},this.value)" style="width:70px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
+        <td style="text-align:center;"><input type="number" step="0.1" value="${it.editedDaily}" onchange="okposEditDaily(${i},this.value)" style="width:80px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
         <td style="text-align:center;"><span class="okpos-tag ${tagClass}">${tagText}</span></td>
       </tr>`;
     }).join('')}</tbody>
@@ -1057,10 +1129,9 @@ function recalcOkposDays() {
   const days = parseInt(document.getElementById('okposDays').value) || 30;
   okposItems.forEach(it => {
     if (it.dbPrice && it.dbPrice > 0) {
-      // 기존 메뉴: 총매출 ÷ 일수 ÷ DB판매가
-      it.editedDaily = Math.round(it.orderAmount / days / it.dbPrice);
+      it.editedDaily = parseFloat((it.orderAmount / days / it.dbPrice).toFixed(1));
     } else {
-      it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+      it.editedDaily = it.orderCount > 0 ? parseFloat((it.orderCount / days).toFixed(1)) : 0;
     }
   });
   renderOkposPreview();
@@ -1071,7 +1142,7 @@ function okposEditPrice(idx, val) {
 }
 
 function okposEditDaily(idx, val) {
-  okposItems[idx].editedDaily = parseInt(val) || 0;
+  okposItems[idx].editedDaily = parseFloat(val) || 0;
 }
 
 function okposToggle(idx, checked) {
@@ -1106,10 +1177,10 @@ function applyOkposData() {
     const existingIdx = menus.findIndex(m => m.name === it.name);
 
     if (existingIdx >= 0) {
-      // 기존 메뉴: 판매가는 유지, 수량만 역산하여 업데이트
+      // 기존 메뉴: 판매가는 유지, 수량만 역산하여 업데이트 (소수점 1자리)
       const dbPrice = menus[existingIdx].price;
-      const dailyQty = (dbPrice > 0) ? Math.round(it.orderAmount / days / dbPrice) : (it.editedDaily || 1);
-      menus[existingIdx].qty = dailyQty || 1;
+      const dailyQty = (dbPrice > 0) ? parseFloat((it.orderAmount / days / dbPrice).toFixed(1)) : (it.editedDaily || 1);
+      menus[existingIdx].qty = dailyQty || 0.1;
       menus[existingIdx].salesData = { orderAmount: it.orderAmount, orderCount: it.orderCount, days };
       updated++;
     } else {
@@ -1132,6 +1203,64 @@ function applyOkposData() {
   renderAll();
   saveToServer();
   showToast(`${added}개 메뉴 추가, ${updated}개 업데이트 완료!`);
+}
+
+// ====================================================
+// SIMULATION
+// ====================================================
+function runSimulation(){
+  const pctVal=parseInt(document.getElementById('simSlider').value);
+  const label=document.getElementById('simPctLabel');
+  label.textContent=(pctVal>=0?'+':'')+pctVal+'%';
+  label.style.color=pctVal>0?'var(--success)':pctVal<0?'var(--danger)':'var(--gray-700)';
+
+  const days=parseInt(document.getElementById('bizDays').value)||26;
+  const ratio=1+pctVal/100;
+
+  // 현재 값
+  const curDailySales=menus.reduce((s,m)=>s+m.price*m.qty,0);
+  const curDailyIng=menus.reduce((s,m)=>s+m.cost*m.qty,0);
+  const fixed=fixedCosts.reduce((s,c)=>s+c.amount,0);
+  const varExtra=varCosts.reduce((s,c)=>s+c.amount,0);
+
+  // 시뮬레이션: 매출과 변동비(식재료+기타변동비)가 비례 변동, 고정비는 고정
+  const simRev=curDailySales*ratio*days;
+  const simIng=curDailyIng*ratio*days;
+  const simVar=(varExtra*ratio)+simIng;
+  const simTotal=fixed+simVar;
+  const simProfit=simRev-simTotal;
+  const simMargin=simRev>0?simProfit/simRev*100:0;
+
+  // 현재 순이익
+  const curRev=curDailySales*days;
+  const curTotal=fixed+(curDailyIng*days)+varExtra;
+  const curProfit=curRev-curTotal;
+
+  const diff=simProfit-curProfit;
+
+  const c=document.getElementById('simResults');
+  c.innerHTML=`
+    <div class="stat-card" style="border-left:4px solid var(--primary);">
+      <div class="label">시뮬레이션 월 매출</div>
+      <div class="value">${fmt(simRev)}</div>
+      <div class="sub">현재 ${fmt(curRev)}</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid var(--danger);">
+      <div class="label">시뮬레이션 월 비용</div>
+      <div class="value">${fmt(simTotal)}</div>
+      <div class="sub">고정비 ${fmt(fixed)} 동일</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid ${simProfit>=0?'var(--success)':'var(--danger)'};">
+      <div class="label">시뮬레이션 순이익</div>
+      <div class="value" style="color:${simProfit>=0?'var(--success)':'var(--danger)'};">${fmt(simProfit)}</div>
+      <div class="sub" style="color:${diff>=0?'var(--success)':'var(--danger)'};">${diff>=0?'▲':'▼'} ${fmt(Math.abs(diff))} ${diff>=0?'증가':'감소'}</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid var(--warning);">
+      <div class="label">시뮬레이션 순이익률</div>
+      <div class="value" style="color:${simMargin>=10?'var(--success)':simMargin>=0?'var(--warning)':'var(--danger)'};">${pct(simMargin)}</div>
+      <div class="sub">현재 ${pct(curRev>0?(curProfit/curRev*100):0)}</div>
+    </div>
+  `;
 }
 
 // ====================================================
