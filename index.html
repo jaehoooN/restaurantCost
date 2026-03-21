@@ -978,9 +978,12 @@ function handleOKPOS(event) {
 
         const existingIdx = menus.findIndex(m => m.name === name);
         const status = existingIdx >= 0 ? 'update' : 'new';
+        // 기존 메뉴가 있으면 DB에 저장된 판매가를 가져옴
+        const dbPrice = existingIdx >= 0 ? menus[existingIdx].price : null;
 
         okposItems.push({
           name, orderAmount, orderCount, payAmount, unitPrice,
+          dbPrice,
           checked: hasRevenue && !isSkip,
           status: hasRevenue ? status : 'skip',
           existingIdx,
@@ -1012,8 +1015,15 @@ function renderOkposPreview() {
     `${checkedCount}개 선택 · 총 매출 ${fmt(checkedTotal)}`;
 
   okposItems.forEach(it => {
-    if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
-    if (it.editedPrice === undefined) it.editedPrice = it.unitPrice;
+    if (it.dbPrice && it.dbPrice > 0) {
+      // 기존 메뉴: DB 판매가 사용, 수량은 총매출÷일수÷DB판매가로 역산
+      it.editedPrice = it.dbPrice;
+      if (it.editedDaily === undefined) it.editedDaily = Math.round(it.orderAmount / days / it.dbPrice);
+    } else {
+      // 새 메뉴: 엑셀 단가 사용
+      if (it.editedPrice === undefined) it.editedPrice = it.unitPrice;
+      if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+    }
   });
 
   c.innerHTML = `<table>
@@ -1035,7 +1045,7 @@ function renderOkposPreview() {
         <td><strong>${it.name}</strong></td>
         <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${fmt(it.orderAmount)}</td>
         <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${it.orderCount.toLocaleString()}건</td>
-        <td style="text-align:center;"><input type="number" value="${it.editedPrice}" onchange="okposEditPrice(${i},this.value)" style="width:100px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
+        <td style="text-align:center;">${it.dbPrice?`<span style="font-size:.9rem;font-weight:600;">${fmt(it.editedPrice)}</span>`:`<input type="number" value="${it.editedPrice}" onchange="okposEditPrice(${i},this.value)" style="width:100px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}">`}</td>
         <td style="text-align:center;"><input type="number" value="${it.editedDaily}" onchange="okposEditDaily(${i},this.value)" style="width:70px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
         <td style="text-align:center;"><span class="okpos-tag ${tagClass}">${tagText}</span></td>
       </tr>`;
@@ -1046,7 +1056,12 @@ function renderOkposPreview() {
 function recalcOkposDays() {
   const days = parseInt(document.getElementById('okposDays').value) || 30;
   okposItems.forEach(it => {
-    it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+    if (it.dbPrice && it.dbPrice > 0) {
+      // 기존 메뉴: 총매출 ÷ 일수 ÷ DB판매가
+      it.editedDaily = Math.round(it.orderAmount / days / it.dbPrice);
+    } else {
+      it.editedDaily = it.orderCount > 0 ? Math.round(it.orderCount / days) : 0;
+    }
   });
   renderOkposPreview();
 }
@@ -1088,16 +1103,19 @@ function applyOkposData() {
   let added = 0, updated = 0;
 
   selected.forEach(it => {
-    const price = it.editedPrice !== undefined ? it.editedPrice : it.unitPrice;
-    const dailyQty = it.editedDaily !== undefined ? it.editedDaily : Math.round(it.orderCount / days);
     const existingIdx = menus.findIndex(m => m.name === it.name);
 
     if (existingIdx >= 0) {
-      menus[existingIdx].price = price;
+      // 기존 메뉴: 판매가는 유지, 수량만 역산하여 업데이트
+      const dbPrice = menus[existingIdx].price;
+      const dailyQty = (dbPrice > 0) ? Math.round(it.orderAmount / days / dbPrice) : (it.editedDaily || 1);
       menus[existingIdx].qty = dailyQty || 1;
       menus[existingIdx].salesData = { orderAmount: it.orderAmount, orderCount: it.orderCount, days };
       updated++;
     } else {
+      // 새 메뉴: 엑셀에서 계산된 판매가 사용
+      const price = it.editedPrice !== undefined ? it.editedPrice : it.unitPrice;
+      const dailyQty = it.editedDaily !== undefined ? it.editedDaily : Math.round(it.orderCount / days);
       menus.push({
         name: it.name,
         price: price,
