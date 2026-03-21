@@ -1090,13 +1090,13 @@ function renderOkposPreview() {
 
   okposItems.forEach(it => {
     if (it.dbPrice && it.dbPrice > 0) {
-      // 기존 메뉴: DB 판매가 사용, 수량은 총매출÷일수÷DB판매가로 역산 (소수점 1자리)
+      // 기존 메뉴: DB 판매가 사용, 수량은 총매출÷일수÷DB판매가로 정밀 역산
       it.editedPrice = it.dbPrice;
-      if (it.editedDaily === undefined) it.editedDaily = parseFloat((it.orderAmount / days / it.dbPrice).toFixed(1));
+      if (it.editedDaily === undefined) it.editedDaily = it.orderAmount / days / it.dbPrice;
     } else {
       // 새 메뉴: 엑셀 단가 사용
       if (it.editedPrice === undefined) it.editedPrice = it.unitPrice;
-      if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? parseFloat((it.orderCount / days).toFixed(1)) : 0;
+      if (it.editedDaily === undefined) it.editedDaily = it.orderCount > 0 ? (it.orderCount / days) : 0;
     }
   });
 
@@ -1120,7 +1120,7 @@ function renderOkposPreview() {
         <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${fmt(it.orderAmount)}</td>
         <td style="text-align:right;font-size:.9rem;color:var(--gray-500);">${it.orderCount.toLocaleString()}건</td>
         <td style="text-align:center;">${it.dbPrice?`<span style="font-size:.9rem;font-weight:600;">${fmt(it.editedPrice)}</span>`:`<input type="number" value="${it.editedPrice}" onchange="okposEditPrice(${i},this.value)" style="width:100px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}">`}</td>
-        <td style="text-align:center;"><input type="number" step="0.1" value="${it.editedDaily}" onchange="okposEditDaily(${i},this.value)" style="width:80px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
+        <td style="text-align:center;"><input type="number" step="0.1" value="${parseFloat(it.editedDaily.toFixed(1))}" onchange="okposEditDaily(${i},this.value)" style="width:80px;padding:6px 8px;text-align:right;font-size:.9rem;${it.checked?'':'opacity:.4;'}"></td>
         <td style="text-align:center;"><span class="okpos-tag ${tagClass}">${tagText}</span></td>
       </tr>`;
     }).join('')}</tbody>
@@ -1131,9 +1131,9 @@ function recalcOkposDays() {
   const days = parseInt(document.getElementById('okposDays').value) || parseInt(document.getElementById('bizDays').value) || 26;
   okposItems.forEach(it => {
     if (it.dbPrice && it.dbPrice > 0) {
-      it.editedDaily = parseFloat((it.orderAmount / days / it.dbPrice).toFixed(1));
+      it.editedDaily = it.orderAmount / days / it.dbPrice;
     } else {
-      it.editedDaily = it.orderCount > 0 ? parseFloat((it.orderCount / days).toFixed(1)) : 0;
+      it.editedDaily = it.orderCount > 0 ? (it.orderCount / days) : 0;
     }
   });
   renderOkposPreview();
@@ -1179,9 +1179,9 @@ function applyOkposData() {
     const existingIdx = menus.findIndex(m => m.name === it.name);
 
     if (existingIdx >= 0) {
-      // 기존 메뉴: 판매가는 유지, 수량만 역산하여 업데이트 (소수점 1자리)
+      // 기존 메뉴: 판매가는 유지, 수량은 정밀 역산
       const dbPrice = menus[existingIdx].price;
-      const dailyQty = (dbPrice > 0) ? parseFloat((it.orderAmount / days / dbPrice).toFixed(1)) : (it.editedDaily || 1);
+      const dailyQty = (dbPrice > 0) ? (it.orderAmount / days / dbPrice) : (it.editedDaily || 1);
       menus[existingIdx].qty = dailyQty || 0.1;
       menus[existingIdx].salesData = { orderAmount: it.orderAmount, orderCount: it.orderCount, days };
       updated++;
