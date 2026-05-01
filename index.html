@@ -1048,6 +1048,12 @@ function handleOKPOS(event) {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet);
 
+      // 이름 정규화: 괄호↔공백 통일, 연속공백 제거
+      function normName(s){ return s.replace(/[()（）]/g,' ').replace(/\s+/g,' ').trim(); }
+
+      // 기존 메뉴 이름 정규화 맵 생성
+      const menuNormMap = menus.map((m,i) => ({ idx:i, norm: normName(m.name) }));
+
       okposItems = [];
       rows.forEach(row => {
         const name = (row['상품별'] || '').trim();
@@ -1062,7 +1068,13 @@ function handleOKPOS(event) {
         // 결제금액 기준으로 단가 계산 (할인/취소 반영된 실매출)
         const unitPrice = orderCount > 0 ? Math.round(payAmount / orderCount) : 0;
 
-        const existingIdx = menus.findIndex(m => m.name === name);
+        // 이름 매칭: 정확 매칭 → 정규화 매칭
+        let existingIdx = menus.findIndex(m => m.name === name);
+        if (existingIdx < 0) {
+          const nn = normName(name);
+          const found = menuNormMap.find(e => e.norm === nn);
+          if (found) existingIdx = found.idx;
+        }
         const status = existingIdx >= 0 ? 'update' : 'new';
         // 기존 메뉴가 있으면 DB에 저장된 판매가를 가져옴
         const dbPrice = existingIdx >= 0 ? menus[existingIdx].price : null;
@@ -1192,10 +1204,17 @@ function applyOkposData() {
   const selected = okposItems.filter(i => i.checked && i.payAmount > 0);
   if (!selected.length) { alert('적용할 메뉴를 선택해주세요.'); return; }
 
+  function normName(s){ return s.replace(/[()（）]/g,' ').replace(/\s+/g,' ').trim(); }
+
   let added = 0, updated = 0;
 
   selected.forEach(it => {
-    const existingIdx = menus.findIndex(m => m.name === it.name);
+    // 정확 매칭 → 정규화 매칭
+    let existingIdx = menus.findIndex(m => m.name === it.name);
+    if (existingIdx < 0) {
+      const nn = normName(it.name);
+      existingIdx = menus.findIndex(m => normName(m.name) === nn);
+    }
 
     if (existingIdx >= 0) {
       // 기존 메뉴: 판매가는 유지, 수량은 정밀 역산
@@ -1219,6 +1238,27 @@ function applyOkposData() {
       added++;
     }
   });
+
+  // 매출 데이터 없는 메뉴 중 유사 이름 중복 감지
+  const noSalesMenus = menus.filter(m => !m.salesData);
+  const withSalesMenus = menus.filter(m => m.salesData);
+  const dupes = [];
+  noSalesMenus.forEach(m => {
+    const mn = normName(m.name);
+    const similar = withSalesMenus.find(w => {
+      const wn = normName(w.name);
+      return mn === wn || wn.includes(mn) || mn.includes(wn);
+    });
+    if (similar) dupes.push(m.name);
+  });
+  if (dupes.length > 0) {
+    const msg = `⚠️ 매출 데이터가 없는 메뉴 중 유사 이름이 감지되었습니다.\n중복 가능성이 있는 메뉴:\n\n${dupes.map(d=>'• '+d).join('\n')}\n\n이 메뉴들을 삭제하시겠습니까?\n(매출 불러오기로 업데이트된 메뉴와 중복됩니다)`;
+    if (confirm(msg)) {
+      for (let i = menus.length - 1; i >= 0; i--) {
+        if (dupes.includes(menus[i].name)) menus.splice(i, 1);
+      }
+    }
+  }
 
   closeOkposModal();
   renderAll();
