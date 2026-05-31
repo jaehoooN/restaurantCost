@@ -1049,7 +1049,7 @@ function handleOKPOS(event) {
       const rows = XLSX.utils.sheet_to_json(sheet);
 
       // 이름 정규화: 괄호↔공백 통일, 연속공백 제거
-      function normName(s){ return s.replace(/[()（）]/g,' ').replace(/\s+/g,' ').trim(); }
+      function normName(s){ return s.replace(/[()（）\s,.\-·]/g,'').toLowerCase(); }
 
       // 기존 메뉴 이름 정규화 맵 생성
       const menuNormMap = menus.map((m,i) => ({ idx:i, norm: normName(m.name) }));
@@ -1068,12 +1068,17 @@ function handleOKPOS(event) {
         // 결제금액 기준으로 단가 계산 (할인/취소 반영된 실매출)
         const unitPrice = orderCount > 0 ? Math.round(payAmount / orderCount) : 0;
 
-        // 이름 매칭: 정확 매칭 → 정규화 매칭
+        // 이름 매칭: 정확 → 정규화(공백/괄호 제거) → 포함 매칭
         let existingIdx = menus.findIndex(m => m.name === name);
         if (existingIdx < 0) {
           const nn = normName(name);
           const found = menuNormMap.find(e => e.norm === nn);
-          if (found) existingIdx = found.idx;
+          if (found) { existingIdx = found.idx; }
+          else if (nn.length >= 4) {
+            // 한쪽이 다른쪽을 포함하면 매칭 (짧은 이름 4자 이상)
+            const cont = menuNormMap.find(e => (e.norm.includes(nn) || nn.includes(e.norm)) && Math.min(e.norm.length, nn.length) >= 4);
+            if (cont) existingIdx = cont.idx;
+          }
         }
         const status = existingIdx >= 0 ? 'update' : 'new';
         // 기존 메뉴가 있으면 DB에 저장된 판매가를 가져옴
@@ -1204,16 +1209,19 @@ function applyOkposData() {
   const selected = okposItems.filter(i => i.checked && i.payAmount > 0);
   if (!selected.length) { alert('적용할 메뉴를 선택해주세요.'); return; }
 
-  function normName(s){ return s.replace(/[()（）]/g,' ').replace(/\s+/g,' ').trim(); }
+  function normName(s){ return s.replace(/[()（）\s,.\-·]/g,'').toLowerCase(); }
 
   let added = 0, updated = 0;
 
   selected.forEach(it => {
-    // 정확 매칭 → 정규화 매칭
+    // 정확 → 정규화 → 포함 매칭
     let existingIdx = menus.findIndex(m => m.name === it.name);
     if (existingIdx < 0) {
       const nn = normName(it.name);
       existingIdx = menus.findIndex(m => normName(m.name) === nn);
+      if (existingIdx < 0 && nn.length >= 4) {
+        existingIdx = menus.findIndex(m => { const mn = normName(m.name); return (mn.includes(nn) || nn.includes(mn)) && Math.min(mn.length, nn.length) >= 4; });
+      }
     }
 
     if (existingIdx >= 0) {
@@ -1239,24 +1247,30 @@ function applyOkposData() {
     }
   });
 
-  // 매출 데이터 없는 메뉴 중 유사 이름 중복 감지
-  const noSalesMenus = menus.filter(m => !m.salesData);
-  const withSalesMenus = menus.filter(m => m.salesData);
-  const dupes = [];
-  noSalesMenus.forEach(m => {
-    const mn = normName(m.name);
-    const similar = withSalesMenus.find(w => {
-      const wn = normName(w.name);
-      return mn === wn || wn.includes(mn) || mn.includes(wn);
-    });
-    if (similar) dupes.push(m.name);
+  // 정규화 이름 기준 중복 메뉴 감지 (같은 정규화명이 2개 이상이면 중복)
+  const normGroups = {};
+  menus.forEach((m, i) => {
+    const nn = normName(m.name);
+    if (!normGroups[nn]) normGroups[nn] = [];
+    normGroups[nn].push(i);
   });
-  if (dupes.length > 0) {
-    const msg = `⚠️ 매출 데이터가 없는 메뉴 중 유사 이름이 감지되었습니다.\n중복 가능성이 있는 메뉴:\n\n${dupes.map(d=>'• '+d).join('\n')}\n\n이 메뉴들을 삭제하시겠습니까?\n(매출 불러오기로 업데이트된 메뉴와 중복됩니다)`;
+  const dupeIdxToRemove = [];
+  const dupeNames = [];
+  Object.values(normGroups).forEach(idxs => {
+    if (idxs.length < 2) return;
+    // 이번 임포트에서 salesData가 갱신된 메뉴를 우선 유지
+    // salesData가 있는 것 중 가장 최근(days === 현재 days)을 keep, 나머지 제거 대상
+    const withCurrent = idxs.filter(i => menus[i].salesData && menus[i].salesData.days === days);
+    const keep = withCurrent.length > 0 ? withCurrent[0] : idxs[0];
+    idxs.forEach(i => {
+      if (i !== keep) { dupeIdxToRemove.push(i); dupeNames.push(menus[i].name); }
+    });
+  });
+  if (dupeIdxToRemove.length > 0) {
+    const msg = `⚠️ 이름이 유사한 중복 메뉴 ${dupeIdxToRemove.length}개가 감지되었습니다.\n\n${dupeNames.map(d=>'• '+d).join('\n')}\n\n중복 메뉴를 삭제하시겠습니까?`;
     if (confirm(msg)) {
-      for (let i = menus.length - 1; i >= 0; i--) {
-        if (dupes.includes(menus[i].name)) menus.splice(i, 1);
-      }
+      // 인덱스 큰 순서로 삭제 (splice 안전)
+      dupeIdxToRemove.sort((a,b) => b-a).forEach(i => menus.splice(i, 1));
     }
   }
 
